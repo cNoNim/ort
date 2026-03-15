@@ -268,6 +268,11 @@ pub struct Value<Type: ValueTypeMarker + ?Sized = DynValueTypeMarker> {
 /// extract data from dynamic values directly using `try_extract_*` methods; see [`Value`] for more information.
 pub type DynValue = Value<DynValueTypeMarker>;
 
+#[derive(Debug, Clone)]
+pub struct ValueHandle {
+	pub(crate) inner: Arc<ValueInner>
+}
+
 /// Marker trait used to determine what operations can and cannot be performed on a [`Value`] of a given type.
 ///
 /// For example, [`Tensor::try_extract_tensor`] can only be used on [`Value`]s with the [`TensorValueTypeMarker`] (which
@@ -396,6 +401,13 @@ impl<Type: ValueTypeMarker + ?Sized> Value<Type> {
 	/// Converts this value into a type-erased [`DynValue`].
 	pub fn into_dyn(self) -> DynValue {
 		unsafe { self.transmute_type() }
+	}
+
+	#[must_use]
+	pub fn into_handle(self) -> ValueHandle {
+		ValueHandle {
+			inner: self.inner
+		}
 	}
 
 	/// Returns `true` if this value is a tensor, or `false` if it is another type (sequence, map).

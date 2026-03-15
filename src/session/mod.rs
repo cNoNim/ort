@@ -361,7 +361,7 @@ impl Session {
 		let run_options_ptr = if let Some(run_options) = run_options { run_options.ptr() } else { ptr::null() };
 		ortsys![unsafe RunWithBinding(self.inner.ptr().cast_mut(), run_options_ptr, binding.ptr())?];
 
-		let mut count = binding.output_values.len();
+		let mut count = binding.held_outputs.len();
 		if count > 0 {
 			let mut output_values_ptr: *mut *mut ort_sys::OrtValue = ptr::null_mut();
 			ortsys![unsafe GetBoundOutputValues(binding.ptr(), self.inner.allocator.ptr().cast_mut(), &mut output_values_ptr, &mut count)?; nonNull(output_values_ptr)];
@@ -376,7 +376,7 @@ impl Session {
 				})
 				.collect();
 
-			Ok(SessionOutputs::new(binding.output_values.iter().map(|(k, _)| k.as_str()).collect(), output_values))
+			Ok(SessionOutputs::new(binding.held_outputs.iter().map(|(k, _)| k.as_str()).collect(), output_values))
 		} else {
 			Ok(SessionOutputs::new_empty())
 		}

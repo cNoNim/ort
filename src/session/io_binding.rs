@@ -11,7 +11,7 @@ use crate::{
 	ortsys,
 	session::{Session, SharedSessionInner},
 	util::{MiniMap, with_cstr},
-	value::{DynValue, Value, ValueInner, ValueTypeMarker}
+	value::{Value, ValueHandle, ValueInner, ValueTypeMarker}
 };
 
 /// Enables binding of session inputs and/or outputs to pre-allocated memory.
@@ -94,7 +94,7 @@ use crate::{
 pub struct IoBinding {
 	ptr: NonNull<ort_sys::OrtIoBinding>,
 	held_inputs: MiniMap<String, Arc<ValueInner>>,
-	pub(crate) output_values: MiniMap<String, Option<DynValue>>,
+	pub(crate) held_outputs: MiniMap<String, Option<Arc<ValueInner>>>,
 	_session: Arc<SharedSessionInner>
 }
 
@@ -106,7 +106,7 @@ impl IoBinding {
 		Ok(Self {
 			ptr,
 			held_inputs: MiniMap::new(),
-			output_values: MiniMap::new(),
+			held_outputs: MiniMap::new(),
 			_session: session.inner()
 		})
 	}
@@ -141,17 +141,25 @@ impl IoBinding {
 	/// `name`.
 	///
 	/// [`Tensor::new`]: crate::value::Tensor::new
-	pub fn bind_output<T: ValueTypeMarker + ?Sized, S: Into<String>>(&mut self, name: S, mut ort_value: Value<T>) -> Result<()> {
+	pub fn bind_output<T: ValueTypeMarker + ?Sized, S: Into<String>>(&mut self, name: S, ort_value: Value<T>) -> Result<()> {
+		self.bind_output_handle(name, &ort_value.into_handle())
+	}
+
+	pub fn bind_output_handle<S: Into<String>>(&mut self, name: S, buffer: &ValueHandle) -> Result<()> {
 		let name: String = name.into();
-		unsafe { self.bind_output_mut(name.as_bytes(), &mut ort_value) }?;
-		self.output_values.insert(name, Some(ort_value.into_dyn()));
+		unsafe { self.bind_output_inner(name.as_bytes(), buffer.inner.ptr()) }?;
+		self.held_outputs.insert(name, Some(Arc::clone(&buffer.inner)));
 		Ok(())
 	}
 
 	pub(crate) unsafe fn bind_output_mut<T: ValueTypeMarker + ?Sized, S: AsRef<[u8]>>(&mut self, name: S, ort_value: &mut Value<T>) -> Result<()> {
+		unsafe { self.bind_output_inner(name, ort_value.ptr()) }
+	}
+
+	unsafe fn bind_output_inner<S: AsRef<[u8]>>(&mut self, name: S, ort_value_ptr: *const ort_sys::OrtValue) -> Result<()> {
 		let ptr = self.ptr_mut();
 		with_cstr(name.as_ref(), &|name| {
-			ortsys![unsafe BindOutput(ptr, name.as_ptr(), ort_value.ptr())?];
+			ortsys![unsafe BindOutput(ptr, name.as_ptr(), ort_value_ptr)?];
 			Ok(())
 		})?;
 		Ok(())
@@ -171,7 +179,7 @@ impl IoBinding {
 			ortsys![unsafe BindOutputToDevice(ptr, name.as_ptr(), mem_info.ptr())?];
 			Ok(())
 		})?;
-		self.output_values.insert(name, None);
+		self.held_outputs.insert(name, None);
 		Ok(())
 	}
 
@@ -183,7 +191,7 @@ impl IoBinding {
 	/// Clears all bound outputs specified by [`IoBinding::bind_output`] or [`IoBinding::bind_output_to_device`].
 	pub fn clear_outputs(&mut self) {
 		ortsys![unsafe ClearBoundOutputs(self.ptr_mut())];
-		drop(self.output_values.drain());
+		drop(self.held_outputs.drain());
 	}
 	/// Clears both the bound inputs & outputs; equivalent to [`IoBinding::clear_inputs`] followed by
 	/// [`IoBinding::clear_outputs`].
